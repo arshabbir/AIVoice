@@ -1,0 +1,4 @@
+arshabbir@arshabbirs-MacBook-Pro bpo_voice_agent_stack_v4 % pwd
+/Users/arshabbir/Downloads/bpo_voice_agent_stack_v4
+arshabbir@arshabbirs-MacBook-Pro bpo_voice_agent_stack_v4 % hostname
+arshabbirs-MacBook-Pro.local

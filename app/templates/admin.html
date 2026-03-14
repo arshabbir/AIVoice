@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BPO Voice Agent Admin</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #0f172a; color: #e5e7eb; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .card { background: #111827; border: 1px solid #374151; border-radius: 14px; padding: 18px; }
+    h1, h2 { margin-top: 0; }
+    input, textarea, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #4b5563; padding: 10px 12px; background: #0b1220; color: #fff; }
+    button { cursor: pointer; background: #2563eb; border: none; font-weight: 700; }
+    button.secondary { background: #374151; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #374151; padding: 10px 8px; vertical-align: top; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .ok { color: #34d399; }
+    .warn { color: #fbbf24; }
+    .muted { color: #94a3b8; }
+    .full { grid-column: 1 / -1; }
+    a { color: #93c5fd; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>BPO Voice Agent Admin</h1>
+  <p class="muted">Upload documents, inspect indexed content, and monitor human handoff requests.</p>
+  <p class="muted">Current answer mode: <strong>{{ answer_mode }}</strong></p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Upload document</h2>
+      <form id="uploadForm">
+        <input type="file" id="fileInput" name="file" required />
+        <div style="height: 12px;"></div>
+        <button type="submit">Upload & index</button>
+      </form>
+      <p id="uploadStatus" class="muted"></p>
+    </div>
+
+    <div class="card">
+      <h2>Quick search test</h2>
+      <textarea id="searchQuery" rows="4" placeholder="Ask a question against uploaded documents..."></textarea>
+      <div style="height: 12px;"></div>
+      <button id="searchBtn" type="button">Search</button>
+      <pre id="searchOut" class="mono" style="white-space: pre-wrap;"></pre>
+    </div>
+
+    <div class="card full">
+      <h2>Indexed documents</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Filename</th><th>Uploaded</th><th>Chunks</th></tr>
+        </thead>
+        <tbody id="docsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card full">
+      <h2>Human handoff queue</h2>
+      <p class="muted">When the AI cannot answer from uploaded documents, it places a handoff request here. Use <strong>Join room</strong> to enter the same room as a human.</p>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Room</th><th>Reason</th><th>Created</th><th>Status</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="handoffBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+async function loadDocuments() {
+  const res = await fetch('/api/documents');
+  const docs = await res.json();
+  const body = document.getElementById('docsBody');
+  body.innerHTML = docs.length ? docs.map(d => `
+    <tr>
+      <td class="mono">${d.id}</td>
+      <td>${d.filename}</td>
+      <td>${d.uploaded_at}</td>
+      <td>${d.chunk_count}</td>
+    </tr>
+  `).join('') : `<tr><td colspan="4" class="muted">No documents yet</td></tr>`;
+}
+
+async function loadHandoffs() {
+  const res = await fetch('/api/handoffs');
+  const rows = await res.json();
+  const body = document.getElementById('handoffBody');
+  body.innerHTML = rows.length ? rows.map(h => `
+    <tr>
+      <td>${h.id}</td>
+      <td class="mono">${h.room_name}</td>
+      <td>${h.reason}</td>
+      <td>${h.created_at}</td>
+      <td>${h.status}</td>
+      <td>
+        <button class="secondary" onclick="window.open('/test?room=${encodeURIComponent(h.room_name)}&identity=${encodeURIComponent('human-' + h.id)}','_blank')">Join room</button>
+        <div style="height:8px"></div>
+        <button onclick="closeHandoff(${h.id})">Close</button>
+      </td>
+    </tr>
+  `).join('') : `<tr><td colspan="6" class="muted">No handoff requests</td></tr>`;
+}
+
+async function closeHandoff(id) {
+  await fetch(`/api/handoffs/${id}/close`, { method: 'POST' });
+  await loadHandoffs();
+}
+
+async function handleUpload(ev) {
+  ev.preventDefault();
+  const status = document.getElementById('uploadStatus');
+  const input = document.getElementById('fileInput');
+  if (!input.files.length) return;
+
+  status.textContent = 'Uploading and indexing...';
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+
+  const res = await fetch('/api/upload', { method: 'POST', body: fd });
+  const data = await res.json();
+  if (!res.ok) {
+    status.textContent = 'Upload failed: ' + (data.detail || JSON.stringify(data));
+    return;
+  }
+  status.textContent = `Indexed ${data.filename} with ${data.chunks} chunks in ${data.elapsed_ms || 'n/a'} ms.`;
+  input.value = '';
+  await loadDocuments();
+}
+
+async function handleSearch() {
+  const query = document.getElementById('searchQuery').value.trim();
+  const out = document.getElementById('searchOut');
+  if (!query) return;
+  out.textContent = 'Searching...';
+  const res = await fetch('/api/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, top_k: 4 })
+  });
+  const data = await res.json();
+  out.textContent = JSON.stringify(data, null, 2);
+}
+
+document.getElementById('uploadForm').addEventListener('submit', handleUpload);
+document.getElementById('searchBtn').addEventListener('click', handleSearch);
+loadDocuments();
+loadHandoffs();
+setInterval(loadHandoffs, 5000);
+</script>
+</body>
+</html>

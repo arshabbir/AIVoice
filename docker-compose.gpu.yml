@@ -1,0 +1,10 @@
+services:
+  ollama:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${OLLAMA_GPU}
+    gpus: all
+
+  speech:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${SPEECH_GPU}
+    gpus: all

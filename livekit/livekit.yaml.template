@@ -1,0 +1,14 @@
+port: 7880
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: ${LIVEKIT_RTC_UDP_START}
+  port_range_end: ${LIVEKIT_RTC_UDP_END}
+  use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
+
+redis:
+  address: redis:6379
+
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}

@@ -1,0 +1,5 @@
+- Extract the tar.gz
+- run install-mac.sh/install-ubuntu.sh
+- Then run start.sh/stop.sh to start
+- upload the cocument with /admin URL
+- test the voice using /test URL

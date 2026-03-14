@@ -1,0 +1,150 @@
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: bpo-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: bpo-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: bpo-livekit
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "${LIVEKIT_RTC_UDP_START}-${LIVEKIT_RTC_UDP_END}:${LIVEKIT_RTC_UDP_START}-${LIVEKIT_RTC_UDP_END}/udp"
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: bpo-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS}
+      OLLAMA_MAX_QUEUE: ${OLLAMA_MAX_QUEUE}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH}
+    volumes:
+      - ollama_storage:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+
+  speech:
+    build:
+      context: ./speech
+    container_name: bpo-speech
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL}
+      WHISPER_DEVICE: ${WHISPER_DEVICE}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE}
+      KOKORO_LANG_CODE: ${KOKORO_LANG_CODE}
+      KOKORO_DEFAULT_VOICE: ${KOKORO_DEFAULT_VOICE}
+      SPEECH_API_KEY: ${SPEECH_API_KEY}
+      SPEECH_LOG_LEVEL: ${SPEECH_LOG_LEVEL}
+      PRELOAD_WHISPER: ${PRELOAD_WHISPER}
+      PRELOAD_KOKORO: ${PRELOAD_KOKORO}
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health >/dev/null"]
+      interval: 20s
+      timeout: 10s
+      retries: 40
+
+  app:
+    build:
+      context: ./app
+    container_name: bpo-app
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_started
+    environment:
+      APP_HOST: ${APP_HOST}
+      APP_PORT: ${APP_PORT}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL}
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      UPLOAD_DIR: ${UPLOAD_DIR}
+      APP_DB_PATH: ${APP_DB_PATH}
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION}
+      EMBED_MODEL: ${EMBED_MODEL}
+      SEARCH_TOP_K: ${SEARCH_TOP_K}
+      RAG_CONFIDENCE_THRESHOLD: ${RAG_CONFIDENCE_THRESHOLD}
+      ANSWER_MODE: ${ANSWER_MODE}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL}
+    volumes:
+      - app_data:/data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  agent:
+    build:
+      context: ./agent
+    container_name: bpo-agent
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      speech:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    environment:
+      LIVEKIT_URL: ${LIVEKIT_AGENT_URL}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      APP_BASE_URL: ${APP_BASE_URL}
+      SPEECH_BASE_URL: ${SPEECH_BASE_URL}
+      SPEECH_API_KEY: ${SPEECH_API_KEY}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE}
+      STT_MODEL: ${STT_MODEL}
+      TTS_MODEL: ${TTS_MODEL}
+      KOKORO_VOICE: ${KOKORO_VOICE}
+      GREETING_TEXT: ${GREETING_TEXT}
+      MAX_AGENT_CONCURRENCY: ${MAX_AGENT_CONCURRENCY}
+      SEARCH_TOP_K: ${SEARCH_TOP_K}
+      RAG_CONFIDENCE_THRESHOLD: ${RAG_CONFIDENCE_THRESHOLD}
+      ANSWER_MODE: ${ANSWER_MODE}
+      AGENT_LOG_LEVEL: ${AGENT_LOG_LEVEL}
+
+volumes:
+  qdrant_storage:
+  ollama_storage:
+  app_data:

@@ -1,0 +1,178 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voice Agent Test</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #020617; color: #e2e8f0; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
+    .card { background: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 18px; }
+    input, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #475569; padding: 10px 12px; background: #0b1220; color: #fff; }
+    button { background: #2563eb; border: none; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #475569; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+    .muted { color: #94a3b8; }
+    .pill { display: inline-block; border: 1px solid #475569; border-radius: 999px; padding: 4px 10px; font-size: 12px; color: #cbd5e1; }
+    #eventLog { min-height: 140px; max-height: 280px; overflow: auto; background: #020617; border-radius: 10px; padding: 12px; border: 1px solid #1e293b; }
+    a { color: #93c5fd; }
+    @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Voice Agent Test</h1>
+  <p class="muted">Click connect, allow microphone access, and speak. The AI joins the same LiveKit room automatically.</p>
+  <p><span class="pill">Answer mode: {{ answer_mode }}</span></p>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Room name</label>
+        <input id="roomName" value="{{ default_room }}" placeholder="room-1234" />
+      </div>
+      <div>
+        <label>Participant identity</label>
+        <input id="identity" value="{{ default_identity }}" placeholder="user-1234" />
+      </div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="row">
+      <button id="connectBtn">Connect & start mic</button>
+      <button id="disconnectBtn" class="secondary">Disconnect</button>
+    </div>
+    <div style="height:12px"></div>
+    <div id="status" class="mono muted">Idle</div>
+    <div style="height:12px"></div>
+    <div id="audioContainer"></div>
+    <div style="height:12px"></div>
+    <div id="eventLog" class="mono muted"></div>
+  </div>
+</div>
+
+<script type="module">
+import { Room, RoomEvent } from 'https://cdn.jsdelivr.net/npm/livekit-client@2.17.3/dist/livekit-client.esm.mjs';
+
+let room = null;
+const statusEl = document.getElementById('status');
+const audioContainer = document.getElementById('audioContainer');
+const eventLogEl = document.getElementById('eventLog');
+
+function setStatus(msg) {
+  statusEl.textContent = msg;
+}
+
+function logEvent(msg) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  eventLogEl.textContent += `${line}
+`;
+  eventLogEl.scrollTop = eventLogEl.scrollHeight;
+}
+
+function randomId(prefix) {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function connectRoom() {
+  const roomNameEl = document.getElementById('roomName');
+  const identityEl = document.getElementById('identity');
+
+  if (!roomNameEl.value.trim()) roomNameEl.value = randomId('room');
+  if (!identityEl.value.trim()) identityEl.value = randomId('user');
+
+  setStatus('Fetching token...');
+  logEvent('Requesting participant token');
+  const tokenRes = await fetch('/api/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      room_name: roomNameEl.value.trim(),
+      participant_identity: identityEl.value.trim(),
+      participant_name: identityEl.value.trim()
+    })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) throw new Error(JSON.stringify(tokenData));
+
+  room = new Room();
+
+  room.on(RoomEvent.TrackSubscribed, async (track, publication, participant) => {
+    logEvent(`Track subscribed: ${track.kind} from ${participant.identity}`);
+    if (track.kind === 'audio') {
+      const el = track.attach();
+      el.autoplay = true;
+      el.playsInline = true;
+      el.controls = true;
+      el.muted = false;
+      audioContainer.innerHTML = '';
+      audioContainer.appendChild(el);
+      try {
+        await el.play();
+        setStatus(`Connected to ${tokenData.room_name}. Remote audio subscribed from ${participant.identity}.`);
+      } catch (err) {
+        console.error('Audio autoplay failed:', err);
+        setStatus(`Remote audio subscribed from ${participant.identity}, but browser blocked autoplay. Press play on the audio control.`);
+      }
+    }
+  });
+
+  room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+    logEvent(`Track unsubscribed: ${track.kind} from ${participant.identity}`);
+  });
+
+  room.on(RoomEvent.ParticipantConnected, (participant) => {
+    logEvent(`Participant connected: ${participant.identity}`);
+  });
+
+  room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+    logEvent(`Participant disconnected: ${participant.identity}`);
+  });
+
+  room.on(RoomEvent.Disconnected, () => {
+    setStatus('Disconnected');
+    audioContainer.innerHTML = '';
+    logEvent('Disconnected from LiveKit');
+  });
+
+  setStatus('Connecting to LiveKit...');
+  logEvent(`Connecting to ${tokenData.server_url} room=${tokenData.room_name}`);
+  await room.connect(tokenData.server_url, tokenData.participant_token);
+  await room.localParticipant.setMicrophoneEnabled(true);
+  logEvent('Microphone enabled');
+  setStatus(`Connected. Room=${tokenData.room_name}. Mic is live. Speak now.`);
+}
+
+async function disconnectRoom() {
+  if (room) {
+    await room.disconnect();
+    room = null;
+  }
+  audioContainer.innerHTML = '';
+  setStatus('Disconnected');
+  logEvent('Disconnected by user');
+}
+
+document.getElementById('connectBtn').addEventListener('click', async () => {
+  try {
+    await connectRoom();
+  } catch (err) {
+    console.error(err);
+    setStatus('Connection failed: ' + (err?.message || err));
+    logEvent('Connection failed: ' + (err?.message || err));
+  }
+});
+
+document.getElementById('disconnectBtn').addEventListener('click', async () => {
+  try {
+    await disconnectRoom();
+  } catch (err) {
+    console.error(err);
+    setStatus('Disconnect failed: ' + (err?.message || err));
+    logEvent('Disconnect failed: ' + (err?.message || err));
+  }
+});
+</script>
+</body>
+</html>

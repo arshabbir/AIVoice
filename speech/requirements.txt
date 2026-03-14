@@ -1,0 +1,8 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+faster-whisper>=1.1,<2
+kokoro>=0.9.4,<1
+soundfile>=0.13,<1
+misaki[en]>=0.9.4,<1
+numpy>=1.26,<3
